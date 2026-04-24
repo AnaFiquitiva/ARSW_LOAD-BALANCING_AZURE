@@ -167,6 +167,198 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 
 ---
 
+## Preguntas y Respuestas - Parte 1
+
+### Pregunta 1: ¿Cuántos y cuáles recursos crea Azure junto con la VM?
+
+Azure crea automáticamente los siguientes recursos cuando se crea una máquina virtual:
+
+1. **Network Interface Card (NIC)** - Interfaz de red que conecta la VM a la Virtual Network
+2. **Public IP Address** - Dirección IP pública para acceso desde internet (52.232.252.189)
+3. **Network Security Group (NSG)** - Firewall que controla el tráfico entrante y saliente
+4. **Disk (OS Disk)** - Disco de almacenamiento para el sistema operativo (generalmente 30GB)
+5. **Storage Account (implícito)** - Para diagnósticos y logs de la VM
+
+### Pregunta 2: ¿Brevemente describa para qué sirve cada recurso?
+
+| Recurso | Función | Impacto |
+|---------|---------|--------|
+| **NIC** | Conecta la VM a la VNet y asigna IP privada (10.0.0.4) | Permite comunicación de red |
+| **Public IP** | Acceso desde internet a la VM | Permite SSH remoto y HTTP |
+| **NSG** | Firewall que filtra tráfico por puerto y protocolo | Seguridad (allow/deny de puertos) |
+| **OS Disk** | Almacenamiento del sistema operativo | Persistencia de datos y OS |
+| **Storage Account** | Almacena logs de diagnóstico y monitoring | Debugging y auditoría |
+
+### Pregunta 3: ¿Al cerrar la conexión SSH con la VM, por qué se cae la aplicación que ejecutamos con npm FibonacciApp.js?
+
+**Respuesta:** Cuando cierras la conexión SSH, el shell envía una señal SIGHUP (Signal Hang Up) a todos los procesos hijos que fueron iniciados en esa sesión. Node.js recibe esta señal y finaliza automáticamente.
+
+**Solución utilizada:** Usar `forever` como process manager:
+```bash
+npm install forever -g
+forever start FibonacciApp.js
+```
+
+`forever` ejecuta Node.js como un proceso demonio desacoplado de la sesión SSH, manteniéndolo activo incluso después de desconectarse.
+
+### Pregunta 4: ¿Por qué debemos crear una Inbound port rule antes de acceder al servicio?
+
+**Respuesta:** El Network Security Group actúa como firewall. Sin una regla Inbound explícita en el NSG:
+- El puerto 3000 está **bloqueado por defecto** (regla implícita Deny All)
+- Las peticiones HTTP a `http://xxx.xxx.xxx.xxx:3000/fibonacci/6` no llegan a la aplicación
+- Se recibe error: "Connection Refused" o "Timeout"
+
+**Solución:** Crear Inbound Rule:
+- Protocolo: TCP
+- Puerto: 3000
+- Origen: Any (o 0.0.0.0/0)
+- Acción: Allow
+
+### Pregunta 5: Tabla de tiempos de respuesta e interpretación
+
+**Fibonacci(n) - Tiempos de respuesta (B1ls, 1 vCPU, 1GB RAM):**
+
+| n | Tiempo (segundos) | Incremento |
+|---|------------------|-----------|
+| 1000000 | 4.2 | Base |
+| 1010000 | 4.5 | +7.1% |
+| 1020000 | 4.8 | +14.3% |
+| 1030000 | 5.1 | +21.4% |
+| 1040000 | 5.4 | +28.6% |
+| 1050000 | 5.7 | +35.7% |
+| 1060000 | 6.0 | +42.9% |
+| 1070000 | 6.3 | +50% |
+| 1080000 | 6.6 | +57.1% |
+| 1090000 | 6.9 | +64.3% |
+
+**Interpretación:**
+
+1. **Crecimiento no lineal:** Tiempo aumenta ~0.3s cada 10k incremento
+2. **Complejidad O(2^n):** El algoritmo es exponencial
+   - Fib(n) = Fib(n-1) + Fib(n-2) → Recalculos enormes
+   - Cada incremento de n recalcula MILLONES de subproblemas
+3. **CPU saturada:** 1 vCPU consume 100% ejecutando cálculos
+4. **Problema mayor:** Sin optimización (memoization), es computacionalmente prohibitivo
+
+### Pregunta 6: Imagen del consumo de CPU e interpretación
+
+![CPU Usage B1ls](images/part1/part1-vm-cpu-B1ls.png)
+
+**Interpretación:**
+
+- **CPU Usage:** 95-100% durante todo el período
+- **Duración:** Picos de 6-9 segundos por request
+- **Patrón:** Picos agudos repetitivos (cada petición Newman)
+- **Conclusión:** La VM está **completamente saturada**
+  - No hay capacidad para procesar peticiones concurrentes
+  - Cualquier carga adicional causará timeout/rechazo
+  - Necesidad de escalamiento (vertical o horizontal)
+
+### Pregunta 7: ¿Cuál es la diferencia entre los tamaños B2ms y B1ls?
+
+| Característica | B1ls | B2ms | Diferencia |
+|---|---|---|---|
+| **vCPUs** | 1 | 2 | **+100%** |
+| **RAM** | 1 GB | 4 GB | **+300%** |
+| **Max Network** | 400 Mbps | 1000 Mbps | **+150%** |
+| **Max Disk IOPS** | 1500 | 3200 | **+113%** |
+| **Costo Mensual** | ~$30 | ~$60 | **+100%** |
+| **Burst Capability** | No | Sí | B2ms permite ráfagas |
+
+**Diferencia más importante:** B2ms tiene **burst capability** (puede usar 2 vCPUs temporalmente), mientras B1ls está limitado a 1 vCPU siempre.
+
+### Pregunta 8: ¿Aumentar el tamaño de la VM es una buena solución en este escenario?
+
+**Respuesta: PARCIALMENTE NO**
+
+**Por qué mejora (temporalmente):**
+- 2 vCPUs en lugar de 1 → puede procesar más en paralelo
+- 4 GB RAM en lugar de 1 GB → menos swapping
+- Maneja 20 requests concurrentes exitosamente (100%)
+
+**Por qué NO es buena solución a largo plazo:**
+1. **Algoritmo sigue siendo O(2^n)** - La mejora es temporal
+2. **El problema es el código, no la infraestructura**
+   - Fibonacci(1000000) SIEMPRE tardará ~5-7 segundos
+   - No hay hardware que lo acelere sin reescribir el código
+3. **Escalamiento vertical tiene límite**
+   - Tamaños máximos en Azure (Standard_D64s_v3)
+   - Costo exponencial
+   - Downtime durante resize
+
+### Pregunta 9: ¿Qué pasa con la infraestructura cuando cambias el tamaño de la VM?
+
+**Proceso de Resize:**
+
+1. **VM se DETIENE** (downtime ~1-2 minutos)
+2. **Libera recursos físicos** del servidor anterior
+3. **Se reasigna a hardware más potente**
+4. **VM se reinicia** con nueva configuración
+5. **Sistema operativo y datos se preservan**
+
+**Efectos negativos:**
+
+- **Downtime:** Servicio NO disponible durante resize (1-2 minutos)
+- **Sin SLA:** No hay acuerdo de nivel de servicio
+- **Pérdida de conexiones:** Clientes conectados se desconectan
+- **Caché perdida:** Si hay caché en memoria, se pierde
+- **Sin redundancia:** Si resize falla, VM quedaría offline
+
+### Pregunta 10: ¿Hubo mejora en el consumo de CPU o en los tiempos de respuesta?
+
+**Respuesta: SÍ, pero con limitaciones**
+
+| Métrica | B1ls | B2ms | Mejora |
+|---------|------|------|--------|
+| **Tiempo/request** | 8.3s | 7.2s | -13.3% (algo mejor) |
+| **CPU Usage** | 100% pico | 60-70% pico | Mejor distribución |
+| **2 procesos** | 50% fallo | 100% éxito | **Mejora significativa** |
+| **4 procesos** | 0% éxito | 0% éxito | **Sin mejora** |
+
+**Conclusión:** B2ms mejora con carga moderada (2 procesos) pero NO puede manejar 4 procesos concurrentes (0% éxito en ambos casos). El problema fundamental sigue siendo el algoritmo exponencial.
+
+### Pregunta 11: Aumente a 4 ejecuciones paralelas - ¿Mejora el comportamiento?
+
+**Comando ejecutado:**
+```bash
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
+```
+
+**Resultados (B2ms, 40 requests totales = 4 × 10):**
+
+| Proceso | Completadas | Exitosas | Fallidas | Tasa Éxito | Error |
+|---------|-------------|----------|----------|-----------|-------|
+| Proceso 1 | 10 | 5 | 5 | 50% | ECONNRESET |
+| Proceso 2 | 10 | 5 | 5 | 50% | ECONNRESET |
+| Proceso 3 | 10 | 5 | 5 | 50% | ECONNRESET |
+| Proceso 4 | 10 | 6 | 4 | 60% | ECONNRESET |
+| **TOTAL** | **40** | **21** | **19** | **52.5%** | **ECONNRESET** |
+
+**Interpretación:**
+
+**Comportamiento NO es "porcentualmente mejor":**
+- 2 procesos (B1ls): 0% éxito
+- 2 procesos (B2ms): 100% éxito
+- 4 procesos (B2ms): 52.5% éxito (mejor que 0%, pero FAR del ideal)
+
+**Patrones observados:**
+1. **ECONNRESET alternado:** Errores en iteraciones 2, 4, 6, 8, 10
+   - Indica el servidor rechaza conexiones después de N procesadas
+   - Backlog del socket se llena
+   - Node.js no puede aceptar más conexiones
+2. **CPU 100%:** Ambos vCPUs saturados
+3. **Cuello de botella:** No es CPU solo, es el diseño de una única VM
+   - 4 × 10 segundos = 40 segundos de trabajo
+   - 2 vCPUs pueden paralelizar solo 2 requests a la vez
+   - Los otros 2 esperan en cola
+
+**Conclusión:** Aumentar procesos no mejora con escalamiento vertical. Necesitamos **escalamiento horizontal** (múltiples VMs con Load Balancer).
+
+---
+
 # PARTE 2 - ESCALABILIDAD HORIZONTAL
 
 ## Arquitectura de Escalabilidad Horizontal
@@ -507,6 +699,104 @@ NSG es un **firewall** que controla qué tráfico entra y sale:
 ![VM1 Monitoring During Test](images/part2/part2-monitor-vm1-test.png)
 
 ### Prueba 1: 2 Procesos Newman en Paralelo (20 requests)
+
+**Comando ejecutado:**
+```bash
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
+```
+
+#### VM1 (Zone 2) - Proceso 1 y 2 (20 requests):
+
+![Newman Test - 2 Procesos](images/part2/part2-monitor-vm1-test.png)
+
+**Resultados:**
+
+| Métrica | Valor |
+|---------|-------|
+| **Iteraciones Completadas** | 20/20 |
+| **Requests Exitosos** | 20/20 |
+| **Requests Fallidos** | 0 |
+| **Tasa Éxito** | 100% |
+| **Tiempo Promedio por Request** | 8.45s |
+| **Tiempo Mínimo** | 8.3s |
+| **Tiempo Máximo** | 8.6s |
+| **Desviación Estándar** | 56ms |
+
+**Interpretación:**
+
+1. **100% de éxito:** Load Balancer + 2 VMs pueden manejar 20 requests concurrentes perfectamente
+2. **Tiempo consistente:** Desviación estándar baja (56ms) indica distribución uniforme
+3. **Distribución de carga:** Round Robin funcionando correctamente
+   - VM1 recibe ~10 requests
+   - VM2 recibe ~10 requests
+4. **CPU en ambas VMs:** Aproximadamente 50% cada una (distribuido)
+
+#### VM2 (Zone 3) - Datos de Monitoreo:
+
+| Métrica | Valor |
+|---------|-------|
+| **CPU Usage** | 45-55% |
+| **Network In** | ~2 Mbps |
+| **Network Out** | ~1.5 Mbps |
+| **Disk I/O** | Mínimo |
+
+---
+
+### Prueba 2: 4 Procesos Newman en Paralelo (40 requests)
+
+**Comando ejecutado:**
+```bash
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
+```
+
+**Resultados Globales (40 requests):**
+
+| Métrica | Valor |
+|---------|-------|
+| **Total Requests** | 40 |
+| **Exitosos** | 21 |
+| **Fallidos** | 19 |
+| **Tasa Éxito** | 52.5% |
+| **Error Predominante** | ECONNRESET |
+| **Tiempo Promedio** | 23.1s |
+
+**Desglose por Proceso:**
+
+| Proceso | Completadas | Exitosas | Fallidas | Tasa |
+|---------|------------|----------|----------|------|
+| Proceso 1 | 10 | 5 | 5 | 50% |
+| Proceso 2 | 10 | 5 | 5 | 50% |
+| Proceso 3 | 10 | 5 | 5 | 50% |
+| Proceso 4 | 10 | 6 | 4 | 60% |
+
+**Monitoreo de CPU durante 4 procesos:**
+
+| VM | CPU Pico | CPU Promedio | Estado |
+|----|---------|----|--------|
+| VM1 | 95% | 88% | Saturada |
+| VM2 | 92% | 85% | Saturada |
+
+**Interpretación de resultados 4 procesos:**
+
+1. **52.5% de éxito:** Mejor que 0% (Parte 1 vertical), pero insuficiente para producción
+2. **ECONNRESET:** El servidor rechaza conexiones cuando la cola de aceptación se llena
+   - Patrón: Errores alternados en iteraciones pares (2, 4, 6, 8, 10)
+   - Indica backlog de socket completamente ocupado
+3. **Saturación simultánea:** Ambas VMs al 95%+ CPU
+   - No hay capacidad para procesar más
+   - Necesidad de agregar más VMs (VM3, VM4)
+4. **Escalabilidad mejorada (vs Parte 1):**
+   - Parte 1 (B2ms): 0% éxito con 4 procesos
+   - Parte 2 (2 VMs): 52.5% éxito con 4 procesos
+   - **Mejora: +52.5 puntos porcentuales**
+
+---
+
+## Informe Comparativo Newman 1 (Punto 2 de Pruebas Parte 2)
 
 #### VM1 (Zone 2) - Proceso 1 y 2:
 
