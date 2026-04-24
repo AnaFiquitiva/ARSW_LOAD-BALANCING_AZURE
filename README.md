@@ -181,6 +181,23 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 
 ![CPU Usage B2ms](images/part1/part1-vm-cpu-B2ms.png)
 
+---
+
+## Devolver VM a Tamaño Inicial
+
+**IMPORTANTE:** Para evitar cobros adicionales, es recomendable devolver la VM a su tamaño inicial (B1ls) después de completar las pruebas.
+
+**Pasos:**
+
+1. En Azure Portal, ir a la VM "VERTICAL-SCALABILITY"
+2. Seleccionar "Size" en el menú de configuración
+3. Seleccionar **Standard B1ls** (tamaño original)
+4. Hacer clic en "Resize"
+5. Esperar a que la VM se reinicie (~2 minutos)
+6. Verificar que cambió correctamente: Status debe ser "Running"
+
+**Nota:** El costo de la VM pasará de ~$60/mes (B2ms) a ~$30/mes (B1ls)
+
 ### Conclusión Parte 1
 
 **Limitaciones del Escalamiento Vertical:**
@@ -643,7 +660,124 @@ En lugar de instalar manualmente en cada VM, se pueden usar herramientas de auto
 
 ---
 
-## Respuestas a las Preguntas Teóricas de Parte 2
+## Prueba del Resultado Final de la Infraestructura
+
+El endpoint de acceso a nuestro sistema será la **IP pública del balanceador de carga**. Verifiquemos que los servicios básicos están funcionando.
+
+### Verificación Básica del Load Balancer
+
+**IP del Load Balancer:** 48.211.232.81 (en nuestro caso)
+
+**Consumir los siguientes recursos:**
+
+```
+http://48.211.232.81/                       (raíz del servidor)
+http://48.211.232.81/fibonacci/1            (verificar salud)
+http://48.211.232.81/fibonacci/6            (debe retornar 8)
+http://48.211.232.81/fibonacci/1000000      (prueba de carga)
+```
+
+**Respuestas esperadas:**
+
+| Endpoint | Método | Respuesta Esperada | Significado |
+|----------|--------|-------------------|------------|
+| `/` | GET | Redirección o HTML | Server está activo |
+| `/fibonacci/1` | GET | JSON: {"answer": 1} | Health Probe funciona |
+| `/fibonacci/6` | GET | JSON: {"answer": 8} | Cálculo correcto |
+| `/fibonacci/1000000` | GET | JSON: {"answer": ...} | Load Balancer distribuye |
+
+**Interpretación:**
+
+- Si todos los endpoints responden: Load Balancer funciona correctamente
+- Si algunas VMs no responden: Health Probe las marcará como UNHEALTHY
+- El Load Balancer solo envía tráfico a VMs HEALTHY
+
+### Verificación del Health Probe
+
+**Health Probe configurado:**
+- Protocolo: HTTP
+- Puerto: 3000
+- Path: /fibonacci/1
+- Intervalo: 5 segundos
+- Threshold: 2 fallos antes de marcar UNHEALTHY
+
+**Verificar en Azure Portal:**
+
+1. Ir a Load Balancer "HORIZONTAL-SCALABILITY-LB"
+2. Seleccionar "Backend Pools" → "HORIZONTAL-SCALABILITY-BP"
+3. Verificar estado de cada VM:
+   - VM1 (10.0.0.4:3000) debe estar **HEALTHY**
+   - VM2 (10.0.0.5:3000) debe estar **HEALTHY**
+
+**Si alguna VM está UNHEALTHY:**
+- SSH a la VM y verificar que FibonacciApp está ejecutándose
+- Ejecutar: `forever list`
+- Esperar 5 segundos a que Health Probe reintente
+- Debe cambiar a HEALTHY automáticamente
+
+---
+
+## Pruebas de Carga Newman - Infraestructura Horizontal
+
+**Objetivo:** Replicar las pruebas de Newman de la Parte 1 pero contra el Load Balancer (en lugar de una única VM).
+
+### Configuración de Newman para Load Balancer
+
+**Modificar el archivo de entorno:**
+
+Editar `FibonacciApp/postman/part2/[ARSW_LOAD-BALANCING_AZURE].postman_environment.json`:
+
+```json
+{
+  "id": "...",
+  "name": "ARSW_LOAD-BALANCING_AZURE",
+  "values": [
+    {
+      "key": "loadbalancer",
+      "value": "48.211.232.81",
+      "type": "string"
+    },
+    {
+      "key": "nth",
+      "value": "1000000",
+      "type": "string"
+    }
+  ]
+}
+```
+
+**Importante:** Cambiar `loadbalancer` de la IP de la VM individual a la **IP del Load Balancer** (48.211.232.81)
+
+### Ejecución de Pruebas - 2 Procesos Paralelos
+
+**Comando:**
+
+```bash
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
+```
+
+**Diferencias vs Parte 1:**
+- URL apunta a Load Balancer (48.211.232.81) en lugar de VM individual
+- Load Balancer distribuye requests a VM1 y VM2 con Round Robin
+- Si una VM falla, la otra continúa sirviendo requests
+
+### Ejecución de Pruebas - 4 Procesos Paralelos (Proyectado)
+
+**Comando:**
+
+```bash
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
+```
+
+**Con 2 VMs:** Tasa de éxito ~52.5% (documentado en Prueba 2 anteriormente)
+
+**Con 4 VMs (proyectado):** Tasa de éxito ~95%+ (ver sección "Proyección: Pruebas con 4 Máquinas Virtuales")
+
+---
 
 ### Pregunta 1: Tipos de Balanceadores de Carga, SKU e IP Pública
 
