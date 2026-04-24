@@ -9,6 +9,19 @@
 
 ---
 
+## Tabla de Contenidos
+
+1. [Dependencias](#dependencias)
+2. [Parte 0 - Escenario de Calidad](#parte-0---entendiendo-el-escenario-de-calidad)
+3. [Parte 1 - Escalabilidad Vertical](#parte-1---escalabilidad-vertical)
+4. [Parte 2 - Escalabilidad Horizontal](#parte-2---escalabilidad-horizontal)
+5. [Preguntas Teóricas](#respuestas-a-las-preguntas-teóricas-de-parte-2)
+6. [Pruebas Realizadas](#pruebas-realizadas---parte-2)
+7. [Análisis Comparativo](#informe-comparativo-parte-1-vertical-vs-parte-2-horizontal)
+8. [Conclusiones](#conclusiones-finales)
+
+---
+
 ## Dependencias
 
 Cree una cuenta gratuita dentro de Azure. Para hacerlo puede guiarse de esta documentación. Al hacerlo usted contará con $100 USD para gastar durante 12 meses.
@@ -24,7 +37,7 @@ Cuando un conjunto de usuarios consulta un enésimo número (superior a 1000000)
 
 ---
 
-# Parte 1 - Escalabilidad Vertical
+# PARTE 1 - ESCALABILIDAD VERTICAL
 
 ## Creación de la VM
 
@@ -36,6 +49,8 @@ Diríjase al Portal de Azure y a continuación cree una máquina virtual con las
 - **Size:** Standard B1ls
 - **Username:** scalability_lab
 - **SSH public key:** Su llave ssh pública
+
+![VM Basic Configuration](images/part1/part1-vm-basic-config.png)
 
 ### Conectarse a la VM
 
@@ -68,6 +83,8 @@ forever start FibonacciApp.js
 
 Antes de verificar si el endpoint funciona, en Azure vaya a la sección de Networking y cree una Inbound port rule que permita tráfico por el puerto 3000.
 
+![Inbound Rule Configuration](images/part1/part1-vm-3000InboudRule.png)
+
 Para verificar que la aplicación funciona:
 ```
 http://xxx.xxx.xxx.xxx:3000/fibonacci/6
@@ -91,6 +108,8 @@ La función que calcula el enésimo número de la secuencia de Fibonacci está m
 - 1080000
 - 1090000
 
+![Tiempos de Respuesta B1ls](images/part1/part1-tiempos-respuesta.png)
+
 ### Pruebas con Postman/Newman
 
 **Con la VM en tamaño B1ls (tamaño inicial):**
@@ -106,6 +125,14 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 
 **Resultado:** La carga concurrente es demasiada. Muchas peticiones fallan.
 
+![Newman Test B1ls - Test 1](images/part1/part1-newman-test1.png)
+
+![Newman Test B1ls - Test 2](images/part1/part1-newman-test2.png)
+
+![Newman Test B1ls - Test 3](images/part1/part1-newman-test3.png)
+
+![CPU Usage B1ls](images/part1/part1-vm-cpu-B1ls.png)
+
 ### Escalamiento Vertical: B1ls → B2ms
 
 1. En Azure, vaya a la sección "Size" de la VM
@@ -113,20 +140,34 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 3. Espere a que la VM se reinicie
 4. Repita las pruebas con Newman
 
+![VM Resize Menu](images/part1/part1-vm-resize.png)
+
+![VM Resize Confirmation](images/part1/part1-vm-resize-confirmacion.png)
+
 **Resultado:** Las peticiones mejoran, pero aún hay saturación con 4 procesos concurrentes.
+
+![Tiempos de Respuesta B2ms](images/part1/part1-tiempos-respuesta-B2ms.png)
+
+![Newman Test B2ms - Test 1](images/part1/part1-newman-B2ms-test1.png)
+
+![Newman Test B2ms - Test 2](images/part1/part1-newman-B2ms-test2.png)
+
+![Newman Test B2ms - Test 3](images/part1/part1-newman-B2ms-test3.png)
+
+![CPU Usage B2ms](images/part1/part1-vm-cpu-B2ms.png)
 
 ### Conclusión Parte 1
 
 **Limitaciones del Escalamiento Vertical:**
-- ❌ Requiere detener la VM (downtime)
-- ❌ Costo más alto
-- ❌ Límite de escalabilidad (tamaños máximos)
-- ❌ Sin redundancia (si la VM falla, todo cae)
-- ❌ Con 4 procesos concurrentes: **FALLA TOTAL (0% éxito)**
+- NO Requiere detener la VM (downtime)
+- NO Costo más alto
+- NO Límite de escalabilidad (tamaños máximos)
+- NO Sin redundancia (si la VM falla, todo cae)
+- NO Con 4 procesos concurrentes: FALLA TOTAL (0% éxito)
 
 ---
 
-# Parte 2 - Escalabilidad Horizontal
+# PARTE 2 - ESCALABILIDAD HORIZONTAL
 
 ## Arquitectura de Escalabilidad Horizontal
 
@@ -144,6 +185,93 @@ Debido a limitaciones de cuota en la suscripción Azure, solo se pudieron crear 
 
 ---
 
+## Creación de Recursos Parte 2
+
+### 1. Virtual Network
+
+![Virtual Network Creation](images/part2/part2-vn-create.png)
+
+Parámetros:
+- **Name:** HORIZONTAL-SCALABILITY-VNet
+- **Address Space:** 10.0.0.0/16
+- **Subnet:** default (10.0.0.0/24)
+
+### 2. Network Security Group
+
+![NSG Creation](images/part2/part2-nsg-create.png)
+
+Inbound Rules:
+- Puerto 22 (SSH)
+- Puerto 80 (HTTP)
+- Puerto 3000 (Aplicación)
+
+### 3. Máquinas Virtuales
+
+#### VM1 - Availability Zone 2
+
+![VM Creation - Part 1](images/part2/part2-vm-create1.png)
+
+![VM Creation - Part 2](images/part2/part2-vm-create2.png)
+
+![VM Creation - Part 3](images/part2/part2-vm-create3.png)
+
+![VM Creation - Part 4](images/part2/part2-vm-create4.png)
+
+Configuración:
+- **Name:** HORIZONTAL-SCALABILITY-VM1
+- **Zone:** 2
+- **Size:** Standard_B2s
+- **Private IP:** 10.0.0.4
+- **Port:** 3000
+
+#### VM2 - Availability Zone 3
+
+Misma configuración que VM1 pero:
+- **Name:** HORIZONTAL-SCALABILITY-VM2
+- **Zone:** 3
+- **Private IP:** 10.0.0.5
+
+### 4. Load Balancer
+
+![Load Balancer Creation](images/part2/part2-lb-create.png)
+
+Configuración:
+- **Name:** HORIZONTAL-SCALABILITY-LB
+- **SKU:** Standard
+- **Type:** Public
+- **Tier:** Regional
+- **IP:** Zone-Redundant
+
+#### Backend Pool
+
+![Backend Pool Creation](images/part2/part2-lb-bp-create.png)
+
+- **Name:** HORIZONTAL-SCALABILITY-BP
+- **VM1:** 10.0.0.4:3000
+- **VM2:** 10.0.0.5:3000
+
+#### Health Probe
+
+![Health Probe Creation](images/part2/part2-lb-hp-create.png)
+
+- **Protocol:** HTTP
+- **Port:** 3000
+- **Path:** /fibonacci/1
+- **Interval:** 5 segundos
+- **Threshold:** 2
+
+#### Load Balancing Rule
+
+![Load Balancing Rule Creation](images/part2/part2-lb-lbr-create.png)
+
+- **Protocol:** TCP
+- **Frontend Port:** 80
+- **Backend Port:** 3000
+- **Algorithm:** Round Robin
+- **Session Persistence:** None
+
+---
+
 ## Respuestas a las Preguntas Teóricas de Parte 2
 
 ### Pregunta 1: Tipos de Balanceadores de Carga, SKU e IP Pública
@@ -152,10 +280,10 @@ Debido a limitaciones de cuota en la suscripción Azure, solo se pudieron crear 
 
 | Tipo | Capa | Caso de Uso | Performance |
 |------|------|-----------|-------------|
-| **Load Balancer** | Layer 4 (TCP/UDP) | Aplicaciones de alto rendimiento, baja latencia | Millones conexiones/seg |
-| **Application Gateway** | Layer 7 (HTTP/HTTPS) | Web apps, routing por URL/hostname | Más lento, más inteligente |
-| **Traffic Manager** | DNS | Distribución global, failover geográfico | Multi-región |
-| **Front Door** | Edge/Global | CDN + balanceo global | Extremadamente rápido |
+| Load Balancer | Layer 4 (TCP/UDP) | Aplicaciones de alto rendimiento, baja latencia | Millones conexiones/seg |
+| Application Gateway | Layer 7 (HTTP/HTTPS) | Web apps, routing por URL/hostname | Más lento, más inteligente |
+| Traffic Manager | DNS | Distribución global, failover geográfico | Multi-región |
+| Front Door | Edge/Global | CDN + balanceo global | Extremadamente rápido |
 
 **Para este laboratorio:** Usamos **Load Balancer** (Layer 4) por su alto rendimiento con aplicaciones TCP/UDP simples.
 
@@ -165,8 +293,8 @@ Debido a limitaciones de cuota en la suscripción Azure, solo se pudieron crear 
 
 | SKU | Características | Costo |
 |-----|-----------------|-------|
-| **Basic** | Max 300k conexiones, sin SLA | Económico |
-| **Standard** | Millones conexiones, SLA 99.99%, redundancia, métricas avanzadas | Medio |
+| Basic | Max 300k conexiones, sin SLA | Económico |
+| Standard | Millones conexiones, SLA 99.99%, redundancia, métricas avanzadas | Medio |
 
 **Elegimos:** Standard SKU para máxima disponibilidad.
 
@@ -202,8 +330,8 @@ Cuando el LB recibe una petición en puerto 80, la reenvía a una VM en el Backe
 El **Health Probe** es un **vigilante** que verifica si las VMs están vivas:
 
 - **Envía requests periódicamente** (cada 5 segundos) a `http://10.0.0.x:3000/fibonacci/1`
-- **Si recibe respuesta 200 OK** → VM está ✅ HEALTHY
-- **Si no responde o error** → VM está ❌ UNHEALTHY
+- **Si recibe respuesta 200 OK** → VM está HEALTHY
+- **Si no responde o error** → VM está UNHEALTHY
 - El Load Balancer **NO envía tráfico** a VMs unhealthy
 
 **Beneficio:** Si una VM se cae, el LB automáticamente solo envía tráfico a las otras.
@@ -225,9 +353,9 @@ Algoritmo: Round Robin (VM1 → VM2 → VM1 → VM2...)
 
 | Tipo | Descripción | Uso | Problema |
 |------|------------|-----|----------|
-| **None** | Cada request puede ir a VM diferente | Stateless apps ✅ | No mantiene contexto |
-| **Client IP** | Misma IP cliente → siempre misma VM | Apps con estado | Concentra carga |
-| **Client IP + Protocol** | Más específico que Client IP | Protocolos mixtos | Aún concentra carga |
+| None | Cada request puede ir a VM diferente | Stateless apps - OK | No mantiene contexto |
+| Client IP | Misma IP cliente → siempre misma VM | Apps con estado | Concentra carga |
+| Client IP + Protocol | Más específico que Client IP | Protocolos mixtos | Aún concentra carga |
 
 **Para Fibonacci:** Usar **None** (sin persistencia) porque cada request es independiente.
 
@@ -258,8 +386,8 @@ Red **privada aislada** dentro de Azure:
 
 | Término | Significado | Ejemplo |
 |---------|-----------|---------|
-| **Address Space** | Rango total de VNet | 10.0.0.0/16 (64K IPs) |
-| **Address Range** | Rango de una subnet específica | 10.0.0.0/24 (256 IPs) |
+| Address Space | Rango total de VNet | 10.0.0.0/16 (64K IPs) |
+| Address Range | Rango de una subnet específica | 10.0.0.0/24 (256 IPs) |
 
 **Jerarquía:**
 ```
@@ -292,9 +420,9 @@ Cada zona tiene hardware, red y electricidad independientes.
 
 | Escenario | 1 Zone | 3 Zones |
 |-----------|--------|---------|
-| Se cae Datacenter | ❌ Servicio DOWN | ✅ 2 VMs siguen |
-| Fallo de red | ❌ Servicio DOWN | ✅ Otras zonas |
-| Ataque DDoS | ❌ Servicio DOWN | ✅ Otras zonas |
+| Se cae Datacenter | Servicio DOWN | 2 VMs siguen |
+| Fallo de red | Servicio DOWN | Otras zonas |
+| Ataque DDoS | Servicio DOWN | Otras zonas |
 
 **En nuestro caso (2 zonas):**
 ```
@@ -309,8 +437,8 @@ Una IP **zone-redundant** funciona en **TODAS las zonas simultáneamente:**
 
 ```
 IP Pública: 48.211.232.81 (Zone-Redundant)
-├── Accesible desde Zone 2 ✅
-└── Accesible desde Zone 3 ✅
+├── Accesible desde Zone 2
+└── Accesible desde Zone 3
 ```
 
 Si una zona se cae, la IP pública **sigue siendo accesible** desde las otras zonas.
@@ -331,9 +459,9 @@ NSG es un **firewall** que controla qué tráfico entra y sale:
 | 4096 | * | * | * | Deny (Default) |
 
 **Interpretación:**
-- ✅ Puerto 80 abierto → Load Balancer puede recibir peticiones HTTP
-- ✅ Puerto 3000 abierto → Load Balancer puede comunicarse con VMs
-- ❌ Otros puertos bloqueados
+- OK Puerto 80 abierto → Load Balancer puede recibir peticiones HTTP
+- OK Puerto 3000 abierto → Load Balancer puede comunicarse con VMs
+- NO Otros puertos bloqueados
 
 #### ¿Por qué es importante?
 
@@ -346,57 +474,37 @@ NSG es un **firewall** que controla qué tráfico entra y sale:
 ### Pregunta 8: Diagrama de Despliegue
 
 ```
-                          ┌─────────────────┐
-                          │   Internet      │
-                          │   Clientes      │
-                          └────────┬────────┘
-                                   │ HTTP:80
-                                   ▼
-                    ┌──────────────────────────────┐
-                    │  Azure Load Balancer         │
-                    │  IP: 48.211.232.81:80        │
-                    │  (Zone-Redundant)            │
-                    └──────────────┬───────────────┘
-                                   │ Health Probe
-                     ┌─────────────┴────────────┐
-                     ▼ (Round Robin)            ▼ (Round Robin)
-         ┌──────────────────────┐   ┌──────────────────────┐
-         │  Zone 2 (Datacenter) │   │  Zone 3 (Datacenter) │
-         ├──────────────────────┤   ├──────────────────────┤
-         │  VM1 (Standard_B2s)  │   │  VM2 (Standard_B2s)  │
-         │  10.0.0.4:3000       │   │  10.0.0.5:3000       │
-         │                      │   │                      │
-         │  ┌────────────────┐  │   │  ┌────────────────┐  │
-         │  │ FibonacciApp   │  │   │  │ FibonacciApp   │  │
-         │  │ (Node.js)      │  │   │  │ (Node.js)      │  │
-         │  └────────────────┘  │   │  └────────────────┘  │
-         │                      │   │                      │
-         │  ✅ HEALTHY          │   │  ✅ HEALTHY          │
-         └──────────────────────┘   └──────────────────────┘
-                     ▲                       ▲
-                     │ SSH:22                │ SSH:22
-                     │ HTTP:80               │ HTTP:80
-                     │ APP:3000              │ APP:3000
-                     │                       │
-         ┌───────────┴───────────┬───────────┴───────────┐
-         │                       │                       │
-         │   Network Security Group (NSG)                │
-         │   ✅ Allow: 22, 80, 3000                      │
-         │   ❌ Deny: Others                             │
-         │                       │                       │
-         └───────────┬───────────┴───────────┬───────────┘
-                     │                       │
-                     ▼                       ▼
-         ┌──────────────────────┐   ┌──────────────────────┐
-         │   Virtual Network    │   │   Virtual Network    │
-         │  10.0.0.0/16         │   │  10.0.0.0/16         │
-         │  Subnet: 10.0.0.0/24 │   │  Subnet: 10.0.0.0/24 │
-         └──────────────────────┘   └──────────────────────┘
+                          Clientes Internet
+                                 |
+                    HTTP:80       |
+                    Load Balancer IP: 48.211.232.81
+                           |
+                  Health Probe (cada 5s)
+                     |          |
+         +-----------+          +----------+
+         |                                 |
+    Zone 2 (Datacenter)            Zone 3 (Datacenter)
+    VM1 (Standard_B2s)             VM2 (Standard_B2s)
+    10.0.0.4:3000                  10.0.0.5:3000
+    FibonacciApp (Node.js)         FibonacciApp (Node.js)
+    HEALTHY                        HEALTHY
+    |                              |
+    SSH:22 HTTP:80 APP:3000       SSH:22 HTTP:80 APP:3000
+    |                              |
+    Network Security Group (NSG)
+    Allow: 22, 80, 3000
+    Deny: Others
+    |
+    Virtual Network HORIZONTAL-SCALABILITY-VNet
+    Address Space: 10.0.0.0/16
+    Subnet: 10.0.0.0/24
 ```
 
 ---
 
 ## Pruebas Realizadas - Parte 2
+
+![VM1 Monitoring During Test](images/part2/part2-monitor-vm1-test.png)
 
 ### Prueba 1: 2 Procesos Newman en Paralelo (20 requests)
 
@@ -511,7 +619,7 @@ npx newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json \
 
 | Métrica | Parte 1 | Parte 2 |
 |--------|--------|--------|
-| **Tasa Éxito** | ✅ 100% (20/20) | ✅ 100% (20/20) |
+| **Tasa Éxito** | OK 100% (20/20) | OK 100% (20/20) |
 | **Tiempo Prom** | 8.3s | 7.4s (12% mejor) |
 | **Throughput** | 14.5 req/min | 15.3 req/min |
 | **CPU** | <70% | <70% |
@@ -525,7 +633,7 @@ npx newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json \
 
 | Métrica | Parte 1 | Parte 2 |
 |--------|--------|--------|
-| **Tasa Éxito** | ❌ **0%** (0/40) | ⚠️ **52.5%** (21/40) |
+| **Tasa Éxito** | NO 0% (0/40) | PARCIAL 52.5% (21/40) |
 | **Tiempo Prom** | Timeout | 23.1s |
 | **Error** | ECONNREFUSED | ECONNRESET |
 | **CPU** | 100% (saturado) | 100% (saturado) |
@@ -549,10 +657,10 @@ npx newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json \
 **Diferencia:** Parte 2 cuesta **$12/mes más (+18%)**
 
 **Retorno de inversión:**
-- ✅ Máxima disponibilidad (99.95% SLA)
-- ✅ Recuperación automática en 30s
-- ✅ 52.5% vs 0% en carga extrema
-- ✅ Escalabilidad futura
+- OK Máxima disponibilidad (99.95% SLA)
+- OK Recuperación automática en 30s
+- OK 52.5% vs 0% en carga extrema
+- OK Escalabilidad futura
 
 ---
 
@@ -562,7 +670,7 @@ npx newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json \
 
 | Aspecto | Parte 1 | Parte 2 |
 |--------|--------|--------|
-| **Uptime** | **0%** ❌ | **100%** ✅ (otra VM continúa) |
+| **Uptime** | 0% - NO | 100% - OK (otra VM continúa) |
 | **RTO** | ~30 minutos (manual) | ~30 segundos (automático) |
 | **SLA** | Sin SLA formal | 99.95% |
 
@@ -575,17 +683,17 @@ npx newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json \
 ## ¿Cuándo usar cada enfoque?
 
 ### Parte 1 (Vertical) es ideal para:
-- ✅ Desarrollo/testing (no producción)
-- ✅ Cargas predecibles y bajas
-- ✅ Presupuesto mínimo
-- ✅ Aplicaciones sin requisitos de HA
+- OK Desarrollo/testing (no producción)
+- OK Cargas predecibles y bajas
+- OK Presupuesto mínimo
+- OK Aplicaciones sin requisitos de HA
 
 ### Parte 2 (Horizontal) es ideal para:
-- ✅ **Producción con SLA**
-- ✅ **Cargas variables o crecientes**
-- ✅ **Aplicaciones críticas**
-- ✅ **Requisitos de alta disponibilidad**
-- ✅ **Escalabilidad futura**
+- OK **Producción con SLA**
+- OK **Cargas variables o crecientes**
+- OK **Aplicaciones críticas**
+- OK **Requisitos de alta disponibilidad**
+- OK **Escalabilidad futura**
 
 ---
 
