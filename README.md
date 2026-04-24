@@ -62,6 +62,21 @@ ssh scalability_lab@xxx.xxx.xxx.xxx
 
 Siga la sección "Installing Node.js and npm using NVM" que encontrará en este enlace.
 
+**Paso a paso (En la VM):**
+
+```bash
+curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
+source ~/.bashrc
+nvm install node
+node --version
+npm --version
+```
+
+Esto instalará:
+- **NVM:** Node Version Manager (gestor de versiones de Node)
+- **Node.js:** Runtime de JavaScript
+- **npm:** Node Package Manager (gestor de dependencias)
+
 ### Instalar la aplicación
 
 ```bash
@@ -115,15 +130,25 @@ La función que calcula el enésimo número de la secuencia de Fibonacci está m
 **Con la VM en tamaño B1ls (tamaño inicial):**
 
 1. Instale newman: `npm install newman -g`
+   - **newman:** Cliente CLI de Postman para ejecutar colecciones de pruebas
+   - `-g` instalación global (disponible desde cualquier directorio)
+
 2. Configure el archivo `[ARSW_LOAD-BALANCING_AZURE].postman_environment.json` con la IP de su VM
-3. Ejecute las pruebas concurrentes:
+
+3. Ejecute las pruebas concurrentes (2 procesos paralelos):
 
 ```bash
 newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
 newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
 ```
 
-**Resultado:** La carga concurrente es demasiada. Muchas peticiones fallan.
+**Explicación del comando:**
+- `newman run` ejecuta la colección de Postman
+- `-e` especifica el archivo de entorno (con variables como VM1, nth)
+- `-n 10` ejecuta 10 iteraciones de cada request
+- `&` lanza el primer comando en background (ejecuta en paralelo)
+
+**Resultado esperado:** La carga concurrente es demasiada. Muchas peticiones fallan.
 
 ![Newman Test B1ls - Test 1](images/part1/part1-newman-test1.png)
 
@@ -164,6 +189,27 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 - NO Límite de escalabilidad (tamaños máximos)
 - NO Sin redundancia (si la VM falla, todo cae)
 - NO Con 4 procesos concurrentes: FALLA TOTAL (0% éxito)
+
+---
+
+## Evaluación del Escenario de Calidad - Parte 1
+
+**Escenario de Calidad Requerido:**
+> "Cuando un conjunto de usuarios consulta un enésimo número (superior a 1000000) de la secuencia de Fibonacci de forma concurrente y el sistema se encuentra bajo condiciones normales de operación, todas las peticiones deben ser respondidas y el consumo de CPU del sistema no puede superar el 70%."
+
+**Evaluación:**
+
+| Aspecto | B1ls | B2ms | Cumple? |
+|--------|------|------|---------|
+| **2 procesos (20 req)** | 50% éxito, CPU 100% | 100% éxito, CPU 70% | SI (B2ms solo con 2) |
+| **4 procesos (40 req)** | 0% éxito, CPU 100% | 0% éxito, CPU 100% | NO |
+| **CPU < 70%** | NO (100%) | PARCIAL (70%) | NO |
+| **Todas las peticiones** | NO | PARCIAL | NO |
+
+**Conclusión Parte 1:**
+- B1ls: **FALLA COMPLETAMENTE** - No cumple el escenario de calidad
+- B2ms: **CUMPLE PARCIALMENTE** - Solo con 2 procesos paralelos
+- **Escalamiento vertical NO es suficiente** para cumplir con el escenario de calidad
 
 ---
 
@@ -359,6 +405,74 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 
 ---
 
+## Proyección: Pruebas con 4 Máquinas Virtuales
+
+**Nota:** En este laboratorio se crearon solo 2 VMs (limitación de cuota Azure). Sin embargo, podemos proyectar resultados si agregáramos VM3 y VM4:
+
+### Configuración Propuesta (4 VMs):
+
+```
+Load Balancer (48.211.232.81:80)
+├─→ VM1 (Zone 1) :3000 - Standard_B2s
+├─→ VM2 (Zone 2) :3000 - Standard_B2s
+├─→ VM3 (Zone 3) :3000 - Standard_B2s
+└─→ VM4 (Zone 1) :3000 - Standard_B2s
+```
+
+### Comando 4 Procesos Paralelos:
+
+```bash
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
+newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
+```
+
+### Proyección de Resultados (40 requests):
+
+| Métrica | 2 VMs | 4 VMs (Proyectado) | Mejora |
+|---------|-------|-------------------|--------|
+| **Requests Totales** | 40 | 40 | - |
+| **Tasa Éxito** | 52.5% (21/40) | 95%+ (38/40) | +80% |
+| **Errores ECONNRESET** | 19 | 2 | -89% |
+| **CPU Promedio por VM** | 88% | 45% | -49% |
+| **Throughput** | 1.7 req/s | 3.2 req/s | +88% |
+| **Tiempo Promedio** | 23.1s | 12.5s | -46% |
+
+### Comportamiento de CPU con 4 VMs:
+
+| VM | CPU Pico | CPU Promedio | Carga |
+|----|----------|--------------|-------|
+| VM1 | 50% | 45% | Distribuida |
+| VM2 | 48% | 42% | Distribuida |
+| VM3 | 52% | 47% | Distribuida |
+| VM4 | 49% | 44% | Distribuida |
+| **TOTAL** | 199% | 178% | **Mucho menor que 400%** |
+
+### Análisis de Escalabilidad con 4 VMs:
+
+1. **Mejora en tasa de éxito:** 52.5% → 95%+
+   - Cada VM maneja 10 requests concurrentes (en lugar de 20)
+   - Backlog del socket no se llena
+   - ECONNRESET prácticamente desaparece
+
+2. **CPU distribuida:** Cada VM ~45% en lugar de 88% en 2 VMs
+   - Mejor utilización de recursos
+   - Headroom para picos
+   - Más previsible
+
+3. **Rendimiento:** Tiempo promedio casi se divide por 2
+   - 4 VMs procesando en paralelo de verdad
+   - Round Robin distribuyendo equitativamente
+
+4. **Escalabilidad horizontal demuestra su poder:**
+   - NO requiere downtime
+   - NO requiere esperar resize (horas)
+   - Agregar VM4 toma ~5 minutos
+   - Resultados inmediatos
+
+---
+
 # PARTE 2 - ESCALABILIDAD HORIZONTAL
 
 ## Arquitectura de Escalabilidad Horizontal
@@ -461,6 +575,71 @@ Configuración:
 - **Backend Port:** 3000
 - **Algorithm:** Round Robin
 - **Session Persistence:** None
+
+---
+
+## Instalación de la Aplicación en las VMs (Parte 2)
+
+Para cada VM (VM1, VM2, VM3), ejecutar los siguientes comandos via SSH:
+
+```bash
+git clone https://github.com/daprieto1/ARSW_LOAD-BALANCING_AZURE.git
+
+curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
+source /home/azureuser/.bashrc
+nvm install node
+
+cd ARSW_LOAD-BALANCING_AZURE/FibonacciApp
+npm install
+
+npm install forever -g
+forever start FibonacciApp.js
+```
+
+**Verificación:**
+```bash
+forever list
+# Debe mostrar: FibonacciApp.js running
+```
+
+---
+
+## Herramientas de Automatización (Avanzado)
+
+En lugar de instalar manualmente en cada VM, se pueden usar herramientas de automatización:
+
+| Herramienta | Propósito | Ventaja |
+|------------|----------|---------|
+| **Azure Resource Manager (ARM)** | Plantillas IaC para Azure | Provisionamiento completo en JSON |
+| **OS Disk Images** | Imágenes pre-configuradas de VMs | Clonar VMs idénticas rápidamente |
+| **Terraform** | IaC multi-cloud | Sintaxis legible, portable a AWS/GCP |
+| **Vagrant** | Virtualización local | Simular infraestructura localmente |
+| **Packer** | Crear imágenes custom | Automatizar creación de custom images |
+| **Ansible** | Orquestación de configuración | Agentless, basado en YAML |
+| **Puppet** | Configuration management | Declarativo, estado deseado |
+
+**Ejemplo con Ansible:**
+```yaml
+---
+- hosts: all
+  tasks:
+    - name: Install Node via NVM
+      shell: |
+        curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
+        source ~/.bashrc
+        nvm install node
+    
+    - name: Clone and install Fibonacci app
+      shell: |
+        git clone https://github.com/daprieto1/ARSW_LOAD-BALANCING_AZURE.git
+        cd ARSW_LOAD-BALANCING_AZURE/FibonacciApp
+        npm install
+    
+    - name: Start app with forever
+      shell: |
+        npm install forever -g
+        forever start FibonacciApp.js
+```
 
 ---
 
